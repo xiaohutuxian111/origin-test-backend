@@ -12,6 +12,7 @@ concurrency:
 
 env:
   ACR_REGISTRY: crpi-24v7nvpntv8628sf.cn-shanghai.personal.cr.aliyuncs.com
+  ACR_VPC_REGISTRY: crpi-24v7nvpntv8628sf-vpc.cn-shanghai.personal.cr.aliyuncs.com
   ACR_NAMESPACE: stone_spaces
   ACR_REPOSITORY: origin-test-backend
   ECS_HOST: 39.102.84.196
@@ -30,8 +31,10 @@ jobs:
         run: |
           SHORT_SHA="${GITHUB_SHA::12}"
           IMAGE_PREFIX="${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPOSITORY}"
+          ECS_IMAGE_PREFIX="${ACR_VPC_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPOSITORY}"
           echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
           echo "IMAGE_PREFIX=${IMAGE_PREFIX}" >> "$GITHUB_ENV"
+          echo "ECS_IMAGE_PREFIX=${ECS_IMAGE_PREFIX}" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -42,6 +45,24 @@ jobs:
           registry: crpi-24v7nvpntv8628sf.cn-shanghai.personal.cr.aliyuncs.com
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Mirror public dependency images to ACR
+        run: |
+          docker pull nginx:1.27
+          docker tag nginx:1.27 "${IMAGE_PREFIX}:base-nginx-1.27"
+          docker push "${IMAGE_PREFIX}:base-nginx-1.27"
+
+          docker pull postgres:16
+          docker tag postgres:16 "${IMAGE_PREFIX}:base-postgres-16"
+          docker push "${IMAGE_PREFIX}:base-postgres-16"
+
+          docker pull redis:7
+          docker tag redis:7 "${IMAGE_PREFIX}:base-redis-7"
+          docker push "${IMAGE_PREFIX}:base-redis-7"
+
+          docker pull rabbitmq:3.13.7-management
+          docker tag rabbitmq:3.13.7-management "${IMAGE_PREFIX}:base-rabbitmq-3.13.7-management"
+          docker push "${IMAGE_PREFIX}:base-rabbitmq-3.13.7-management"
 
       - name: Build and push server image
         uses: docker/build-push-action@v6
@@ -110,9 +131,11 @@ jobs:
 
           ssh -i ~/.ssh/ecs_deploy_key "${ECS_USER}@${ECS_HOST}" \
             "ACR_REGISTRY='${ACR_REGISTRY}' \
+             ACR_VPC_REGISTRY='${ACR_VPC_REGISTRY}' \
              ACR_USERNAME_B64='${ACR_USERNAME_B64}' \
              ACR_PASSWORD_B64='${ACR_PASSWORD_B64}' \
              IMAGE_PREFIX='${IMAGE_PREFIX}' \
+             ECS_IMAGE_PREFIX='${ECS_IMAGE_PREFIX}' \
              SHORT_SHA='${SHORT_SHA}' \
              ECS_DEPLOY_DIR='${ECS_DEPLOY_DIR}' \
              bash -s" <<'EOF'
@@ -125,12 +148,27 @@ jobs:
 
           cp .env.docker.prod ".env.docker.prod.bak.$(date +%Y%m%d%H%M%S)"
 
-          sed -i "s|^FBA_SERVER_IMAGE=.*|FBA_SERVER_IMAGE=${IMAGE_PREFIX}:${SHORT_SHA}-server|" .env.docker.prod
-          sed -i "s|^FBA_CELERY_WORKER_IMAGE=.*|FBA_CELERY_WORKER_IMAGE=${IMAGE_PREFIX}:${SHORT_SHA}-worker|" .env.docker.prod
-          sed -i "s|^FBA_CELERY_BEAT_IMAGE=.*|FBA_CELERY_BEAT_IMAGE=${IMAGE_PREFIX}:${SHORT_SHA}-beat|" .env.docker.prod
-          sed -i "s|^FBA_CELERY_FLOWER_IMAGE=.*|FBA_CELERY_FLOWER_IMAGE=${IMAGE_PREFIX}:${SHORT_SHA}-flower|" .env.docker.prod
+          upsert_env() {
+            key="$1"
+            value="$2"
+            if grep -q "^${key}=" .env.docker.prod; then
+              sed -i "s|^${key}=.*|${key}=${value}|" .env.docker.prod
+            else
+              printf '\n%s=%s\n' "$key" "$value" >> .env.docker.prod
+            fi
+          }
+
+          upsert_env FBA_SERVER_IMAGE "${ECS_IMAGE_PREFIX}:${SHORT_SHA}-server"
+          upsert_env FBA_CELERY_WORKER_IMAGE "${ECS_IMAGE_PREFIX}:${SHORT_SHA}-worker"
+          upsert_env FBA_CELERY_BEAT_IMAGE "${ECS_IMAGE_PREFIX}:${SHORT_SHA}-beat"
+          upsert_env FBA_CELERY_FLOWER_IMAGE "${ECS_IMAGE_PREFIX}:${SHORT_SHA}-flower"
+          upsert_env NGINX_IMAGE "${ECS_IMAGE_PREFIX}:base-nginx-1.27"
+          upsert_env POSTGRES_IMAGE "${ECS_IMAGE_PREFIX}:base-postgres-16"
+          upsert_env REDIS_IMAGE "${ECS_IMAGE_PREFIX}:base-redis-7"
+          upsert_env RABBITMQ_IMAGE "${ECS_IMAGE_PREFIX}:base-rabbitmq-3.13.7-management"
 
           echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
+          echo "$ACR_PASSWORD" | docker login "$ACR_VPC_REGISTRY" -u "$ACR_USERNAME" --password-stdin
 
           docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod pull
           docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod up -d
