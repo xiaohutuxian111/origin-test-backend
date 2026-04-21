@@ -165,6 +165,7 @@ jobs:
           echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
 
           docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod pull
+          docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod down --remove-orphans
           docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod up -d
           docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod ps
           docker image prune -f
