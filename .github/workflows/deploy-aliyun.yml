@@ -117,6 +117,14 @@ jobs:
           ssh-keygen -y -f ~/.ssh/ecs_deploy_key > /dev/null
           ssh-keyscan -H "${ECS_HOST}" >> ~/.ssh/known_hosts
 
+      - name: Upload deployment files to ECS
+        env:
+          ECS_USER: ${{ secrets.ECS_USER }}
+        run: |
+          ssh -i ~/.ssh/ecs_deploy_key "${ECS_USER}@${ECS_HOST}" "mkdir -p '${ECS_DEPLOY_DIR}'"
+          scp -i ~/.ssh/ecs_deploy_key deploy/backend/docker-compose/docker-compose.prod.yml "${ECS_USER}@${ECS_HOST}:${ECS_DEPLOY_DIR}/docker-compose.prod.yml"
+          scp -i ~/.ssh/ecs_deploy_key deploy/backend/nginx.prod.conf "${ECS_USER}@${ECS_HOST}:${ECS_DEPLOY_DIR}/nginx.prod.conf"
+
       - name: Deploy on ECS
         env:
           ECS_USER: ${{ secrets.ECS_USER }}
