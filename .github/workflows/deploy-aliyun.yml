@@ -1,0 +1,137 @@
+name: Deploy to Alibaba Cloud ECS
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-aliyun-production
+  cancel-in-progress: false
+
+env:
+  ACR_REGISTRY: crpi-24v7nvpntv8628sf.cn-shanghai.personal.cr.aliyuncs.com
+  ACR_NAMESPACE: stone_spaces
+  ACR_REPOSITORY: origin-test-backend
+  ECS_HOST: 39.102.84.196
+  ECS_DEPLOY_DIR: ${{ secrets.ECS_DEPLOY_DIR || '/opt/origin-test' }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set image metadata
+        run: |
+          SHORT_SHA="${GITHUB_SHA::12}"
+          IMAGE_PREFIX="${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPOSITORY}"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
+          echo "IMAGE_PREFIX=${IMAGE_PREFIX}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Alibaba Cloud ACR
+        uses: docker/login-action@v3
+        with:
+          registry: crpi-24v7nvpntv8628sf.cn-shanghai.personal.cr.aliyuncs.com
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            SERVER_TYPE=fba_server
+          tags: |
+            ${{ env.IMAGE_PREFIX }}:${{ env.SHORT_SHA }}-server
+            ${{ env.IMAGE_PREFIX }}:latest-server
+
+      - name: Build and push celery worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            SERVER_TYPE=fba_celery_worker
+          tags: |
+            ${{ env.IMAGE_PREFIX }}:${{ env.SHORT_SHA }}-worker
+            ${{ env.IMAGE_PREFIX }}:latest-worker
+
+      - name: Build and push celery beat image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            SERVER_TYPE=fba_celery_beat
+          tags: |
+            ${{ env.IMAGE_PREFIX }}:${{ env.SHORT_SHA }}-beat
+            ${{ env.IMAGE_PREFIX }}:latest-beat
+
+      - name: Build and push celery flower image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            SERVER_TYPE=fba_celery_flower
+          tags: |
+            ${{ env.IMAGE_PREFIX }}:${{ env.SHORT_SHA }}-flower
+            ${{ env.IMAGE_PREFIX }}:latest-flower
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.ECS_SSH_PRIVATE_KEY }}" > ~/.ssh/ecs_deploy_key
+          chmod 600 ~/.ssh/ecs_deploy_key
+          ssh-keyscan -H "${ECS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Deploy on ECS
+        env:
+          ECS_USER: ${{ secrets.ECS_USER }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: |
+          ACR_USERNAME_B64="$(printf '%s' "$ACR_USERNAME" | base64 -w0)"
+          ACR_PASSWORD_B64="$(printf '%s' "$ACR_PASSWORD" | base64 -w0)"
+
+          ssh -i ~/.ssh/ecs_deploy_key "${ECS_USER}@${ECS_HOST}" \
+            "ACR_REGISTRY='${ACR_REGISTRY}' \
+             ACR_USERNAME_B64='${ACR_USERNAME_B64}' \
+             ACR_PASSWORD_B64='${ACR_PASSWORD_B64}' \
+             IMAGE_PREFIX='${IMAGE_PREFIX}' \
+             SHORT_SHA='${SHORT_SHA}' \
+             ECS_DEPLOY_DIR='${ECS_DEPLOY_DIR}' \
+             bash -s" <<'EOF'
+          set -euo pipefail
+
+          cd "$ECS_DEPLOY_DIR"
+
+          ACR_USERNAME="$(printf '%s' "$ACR_USERNAME_B64" | base64 -d)"
+          ACR_PASSWORD="$(printf '%s' "$ACR_PASSWORD_B64" | base64 -d)"
+
+          cp .env.docker.prod ".env.docker.prod.bak.$(date +%Y%m%d%H%M%S)"
+
+          sed -i "s|^FBA_SERVER_IMAGE=.*|FBA_SERVER_IMAGE=${IMAGE_PREFIX}:${SHORT_SHA}-server|" .env.docker.prod
+          sed -i "s|^FBA_CELERY_WORKER_IMAGE=.*|FBA_CELERY_WORKER_IMAGE=${IMAGE_PREFIX}:${SHORT_SHA}-worker|" .env.docker.prod
+          sed -i "s|^FBA_CELERY_BEAT_IMAGE=.*|FBA_CELERY_BEAT_IMAGE=${IMAGE_PREFIX}:${SHORT_SHA}-beat|" .env.docker.prod
+          sed -i "s|^FBA_CELERY_FLOWER_IMAGE=.*|FBA_CELERY_FLOWER_IMAGE=${IMAGE_PREFIX}:${SHORT_SHA}-flower|" .env.docker.prod
+
+          echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
+          docker compose -f docker-compose.prod.yml --env-file .env.docker.prod pull
+          docker compose -f docker-compose.prod.yml --env-file .env.docker.prod up -d
+          docker compose -f docker-compose.prod.yml --env-file .env.docker.prod ps
+          docker image prune -f
+          EOF
