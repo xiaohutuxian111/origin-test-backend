@@ -12,7 +12,6 @@ concurrency:
 
 env:
   ACR_REGISTRY: crpi-24v7nvpntv8628sf.cn-shanghai.personal.cr.aliyuncs.com
-  ACR_VPC_REGISTRY: crpi-24v7nvpntv8628sf-vpc.cn-shanghai.personal.cr.aliyuncs.com
   ACR_NAMESPACE: stone_spaces
   ACR_REPOSITORY: origin-test-backend
   ECS_HOST: 39.102.84.196
@@ -31,10 +30,8 @@ jobs:
         run: |
           SHORT_SHA="${GITHUB_SHA::12}"
           IMAGE_PREFIX="${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPOSITORY}"
-          ECS_IMAGE_PREFIX="${ACR_VPC_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPOSITORY}"
           echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
           echo "IMAGE_PREFIX=${IMAGE_PREFIX}" >> "$GITHUB_ENV"
-          echo "ECS_IMAGE_PREFIX=${ECS_IMAGE_PREFIX}" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -131,11 +128,9 @@ jobs:
 
           ssh -i ~/.ssh/ecs_deploy_key "${ECS_USER}@${ECS_HOST}" \
             "ACR_REGISTRY='${ACR_REGISTRY}' \
-             ACR_VPC_REGISTRY='${ACR_VPC_REGISTRY}' \
              ACR_USERNAME_B64='${ACR_USERNAME_B64}' \
              ACR_PASSWORD_B64='${ACR_PASSWORD_B64}' \
              IMAGE_PREFIX='${IMAGE_PREFIX}' \
-             ECS_IMAGE_PREFIX='${ECS_IMAGE_PREFIX}' \
              SHORT_SHA='${SHORT_SHA}' \
              ECS_DEPLOY_DIR='${ECS_DEPLOY_DIR}' \
              bash -s" <<'EOF'
@@ -158,17 +153,16 @@ jobs:
             fi
           }
 
-          upsert_env FBA_SERVER_IMAGE "${ECS_IMAGE_PREFIX}:${SHORT_SHA}-server"
-          upsert_env FBA_CELERY_WORKER_IMAGE "${ECS_IMAGE_PREFIX}:${SHORT_SHA}-worker"
-          upsert_env FBA_CELERY_BEAT_IMAGE "${ECS_IMAGE_PREFIX}:${SHORT_SHA}-beat"
-          upsert_env FBA_CELERY_FLOWER_IMAGE "${ECS_IMAGE_PREFIX}:${SHORT_SHA}-flower"
-          upsert_env NGINX_IMAGE "${ECS_IMAGE_PREFIX}:base-nginx-1.27"
-          upsert_env POSTGRES_IMAGE "${ECS_IMAGE_PREFIX}:base-postgres-16"
-          upsert_env REDIS_IMAGE "${ECS_IMAGE_PREFIX}:base-redis-7"
-          upsert_env RABBITMQ_IMAGE "${ECS_IMAGE_PREFIX}:base-rabbitmq-3.13.7-management"
+          upsert_env FBA_SERVER_IMAGE "${IMAGE_PREFIX}:${SHORT_SHA}-server"
+          upsert_env FBA_CELERY_WORKER_IMAGE "${IMAGE_PREFIX}:${SHORT_SHA}-worker"
+          upsert_env FBA_CELERY_BEAT_IMAGE "${IMAGE_PREFIX}:${SHORT_SHA}-beat"
+          upsert_env FBA_CELERY_FLOWER_IMAGE "${IMAGE_PREFIX}:${SHORT_SHA}-flower"
+          upsert_env NGINX_IMAGE "${IMAGE_PREFIX}:base-nginx-1.27"
+          upsert_env POSTGRES_IMAGE "${IMAGE_PREFIX}:base-postgres-16"
+          upsert_env REDIS_IMAGE "${IMAGE_PREFIX}:base-redis-7"
+          upsert_env RABBITMQ_IMAGE "${IMAGE_PREFIX}:base-rabbitmq-3.13.7-management"
 
           echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
-          echo "$ACR_PASSWORD" | docker login "$ACR_VPC_REGISTRY" -u "$ACR_USERNAME" --password-stdin
 
           docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod pull
           docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod up -d
