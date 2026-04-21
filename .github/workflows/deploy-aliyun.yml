@@ -94,8 +94,9 @@ jobs:
       - name: Configure SSH
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "${{ secrets.ECS_SSH_PRIVATE_KEY }}" > ~/.ssh/ecs_deploy_key
+          printf '%s\n' "${{ secrets.ECS_SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/ecs_deploy_key
           chmod 600 ~/.ssh/ecs_deploy_key
+          ssh-keygen -y -f ~/.ssh/ecs_deploy_key > /dev/null
           ssh-keyscan -H "${ECS_HOST}" >> ~/.ssh/known_hosts
 
       - name: Deploy on ECS
@@ -130,8 +131,9 @@ jobs:
           sed -i "s|^FBA_CELERY_FLOWER_IMAGE=.*|FBA_CELERY_FLOWER_IMAGE=${IMAGE_PREFIX}:${SHORT_SHA}-flower|" .env.docker.prod
 
           echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
-          docker compose -f docker-compose.prod.yml --env-file .env.docker.prod pull
-          docker compose -f docker-compose.prod.yml --env-file .env.docker.prod up -d
-          docker compose -f docker-compose.prod.yml --env-file .env.docker.prod ps
+
+          docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod pull
+          docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod up -d
+          docker-compose -f docker-compose.prod.yml --env-file .env.docker.prod ps
           docker image prune -f
           EOF
