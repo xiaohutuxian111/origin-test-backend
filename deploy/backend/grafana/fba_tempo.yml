@@ -39,8 +39,8 @@ metrics_generator:
       - url: http://fba_prometheus:9090/api/v1/write
         send_exemplars: true
 
-  traces_storage:
-    path: /tmp/tempo/generator/traces
+#  traces_storage:
+#    path: /tmp/tempo/generator/traces
 
   processor:
     span_metrics:
@@ -52,8 +52,8 @@ metrics_generator:
     service_graphs:
       dimensions:
         - service.name
-    local_blocks:
-      flush_to_storage: true
+#    local_blocks:
+#      flush_to_storage: true
 
 # 覆盖配置
 overrides:

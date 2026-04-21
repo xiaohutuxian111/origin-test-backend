@@ -11,5 +11,8 @@ venv/
 .serena/
 .agents/
 .logs/
+logs/
 .superpowers/
 superpowers/
+deploy/backend/docker-compose/.env.docker.prod
+deploy/backend/docker-compose/.env.server.prod
